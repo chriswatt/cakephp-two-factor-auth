@@ -1,7 +1,6 @@
 <?php
 namespace TwoFactorAuth\Controller\Component;
 
-use Cake\Controller\Component;
 use Cake\Controller\Component\AuthComponent as CakeAuthComponent;
 use Cake\Core\Configure;
 use RobThree\Auth\TwoFactorAuth;
@@ -44,8 +43,8 @@ class AuthComponent extends CakeAuthComponent
     {
         parent::_setDefaults();
 
-        if ($this->config('verifyAction') === null) {
-            $this->config(
+        if ($this->getConfig('verifyAction') === null) {
+            $this->setConfig(
                 'verifyAction',
                 [
                     'controller' => 'TwoFactorAuth',
@@ -66,6 +65,6 @@ class AuthComponent extends CakeAuthComponent
      */
     public function verifyCode($secret, $code)
     {
-        return $this->tfa->verifyCode($secret, $code);
+        return $this->tfa->verifyCode($secret, str_replace(' ', '', $code));
     }
 }

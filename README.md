@@ -10,7 +10,7 @@ Basically, it works similar way CakePHP `FormAuthenticate` does. After submittin
 
 ## Requirements
 
-- CakePHP 3.0+
+- CakePHP 3.6+ (use ***^1.2*** version for CakePHP <3.6)
 
 ## Installation
 
@@ -48,7 +48,28 @@ class AppController extends Controller
         $this->loadComponent('Security');
         $this->loadComponent('Csrf');
         $this->loadComponent('TwoFactorAuth.Auth', [
-            'authenticate' => ['TwoFactorAuth.Form'],
+            'authenticate' => [
+                'TwoFactorAuth.Form' => [
+                    'fields' => [
+                        'username' => 'username',
+                        'password' => 'password',
+                        'secret' => 'secret', // database field
+                        'remember' => 'remember' // checkbox form field name for "Trust this device" feature
+                    ],
+                    'remember' => true, // enable "Trust this device" feature
+                    'cookie' => [ // cookie settings for "Trust this device" feature
+                        'name' => 'TwoFactorAuth',
+                        'httpOnly' => true,
+                        'expires' => '+30 days'
+                    ],
+                    'verifyAction' => [
+                        'prefix' => false,
+                        'controller' => 'TwoFactorAuth',
+                        'action' => 'verify',
+                        'plugin' => 'TwoFactorAuth'
+                    ],
+                ],
+            ],
         ]);
     }
 }

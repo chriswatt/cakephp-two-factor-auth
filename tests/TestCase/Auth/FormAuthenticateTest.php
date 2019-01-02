@@ -4,9 +4,9 @@ namespace TwoFactorAuth\Test\TestCase\Auth;
 use Cake\Controller\Component;
 use Cake\Controller\ComponentRegistry;
 use Cake\Core\Configure;
+use Cake\Http\Response;
+use Cake\Http\ServerRequest;
 use Cake\I18n\Time;
-use Cake\Network\Request;
-use Cake\Network\Response;
 use Cake\ORM\TableRegistry;
 use Cake\TestSuite\TestCase;
 use Cake\Utility\Security;
@@ -18,7 +18,7 @@ use TwoFactorAuth\Test\App\Controller\AuthTestController;
  *
  * @property \TwoFactorAuth\Auth\FormAuthenticate $auth;
  * @property \Cake\Controller\ComponentRegistry $ComponentRegistry;
- * @property \PHPUnit_Framework_MockObject_MockObject|Request $request;
+ * @property \PHPUnit_Framework_MockObject_MockObject|ServerRequest $request;
  * @property \PHPUnit_Framework_MockObject_MockObject|Response $response;
  * @property AuthTestController $Controller;
  */
@@ -40,12 +40,13 @@ class FormAuthenticateTest extends TestCase
      * setUp method
      *
      * @return void
+     * @throws \ReflectionException
      */
     public function setUp()
     {
         parent::setUp();
 
-        $this->request = new Request();
+        $this->request = new ServerRequest();
         $this->response = new Response();
 
         $this->Controller = new AuthTestController($this->request, $this->response);
@@ -54,10 +55,10 @@ class FormAuthenticateTest extends TestCase
         $this->auth = new FormAuthenticate($this->ComponentRegistry);
 
         $password = password_hash('password', PASSWORD_DEFAULT);
-        TableRegistry::clear();
-        $Users = TableRegistry::get('Users');
+        TableRegistry::getTableLocator()->clear();
+        $Users = TableRegistry::getTableLocator()->get('Users');
         $Users->updateAll(['password' => $password], []);
-        $AuthUsers = TableRegistry::get('AuthUsers', [
+        $AuthUsers = TableRegistry::getTableLocator()->get('AuthUsers', [
             'className' => 'TwoFactorAuth\Test\App\Model\Table\AuthUsersTable'
         ]);
         $AuthUsers->updateAll(['password' => $password], []);
@@ -70,15 +71,15 @@ class FormAuthenticateTest extends TestCase
      */
     public function testConstructor()
     {
-        $this->auth->config([
+        $this->auth->setConfig([
             'userModel' => 'AuthUsers',
-            'fields' => ['username' => 'user', 'password' => 'password', 'secret' => 'secret']
+            'fields' => ['username' => 'user', 'password' => 'password', 'secret' => 'secret', 'remember' => 'remember']
         ]);
 
-        $this->assertEquals('AuthUsers', $this->auth->config('userModel'));
+        $this->assertEquals('AuthUsers', $this->auth->getConfig('userModel'));
         $this->assertEquals(
-            ['username' => 'user', 'password' => 'password', 'secret' => 'secret'],
-            $this->auth->config('fields')
+            ['username' => 'user', 'password' => 'password', 'secret' => 'secret', 'remember' => 'remember'],
+            $this->auth->getConfig('fields')
         );
     }
 
@@ -86,15 +87,18 @@ class FormAuthenticateTest extends TestCase
      * test getting user credentials from request
      *
      * @return void
+     * @throws \ReflectionException
      */
     public function testGetCredentialsFromRequest()
     {
-        $this->auth->config([
+        $this->auth->setConfig([
             'userModel' => 'AuthUsers',
             'fields' => ['username' => 'user', 'password' => 'password', 'secret' => 'secret']
         ]);
 
-        $this->request->data = ['user' => 'testUsername', 'password' => 'testPassword'];
+        $this->request = $this->request
+            ->withData('user', 'testUsername')
+            ->withData('password', 'testPassword');
 
         $this->assertEquals(
             ['username' => 'testUsername', 'password' => 'testPassword'],
@@ -106,15 +110,16 @@ class FormAuthenticateTest extends TestCase
      * test getting user credentials from session
      *
      * @return void
+     * @throws \ReflectionException
      */
     public function testGetCredentialsFromSession()
     {
-        $this->auth->config([
+        $this->auth->setConfig([
             'userModel' => 'AuthUsers',
             'fields' => ['username' => 'user', 'password' => 'password', 'secret' => 'secret']
         ]);
 
-        $this->request->session()->write([
+        $this->request->getSession()->write([
             'TwoFactorAuth.credentials' => [
                 'username' => $this->_encrypt('testUsername'),
                 'password' => $this->_encrypt('testPassword'),
@@ -131,16 +136,19 @@ class FormAuthenticateTest extends TestCase
      * test getting user credentials from request priority over session
      *
      * @return void
+     * @throws \ReflectionException
      */
     public function testGetCredentialsFromRequestOverSession()
     {
-        $this->auth->config([
+        $this->auth->setConfig([
             'userModel' => 'AuthUsers',
             'fields' => ['username' => 'user', 'password' => 'password', 'secret' => 'secret']
         ]);
 
-        $this->request->data = ['user' => 'testUsernameFromRequest', 'password' => 'testPasswordFromRequest'];
-        $this->request->session()->write([
+        $this->request = $this->request
+            ->withData('user', 'testUsernameFromRequest')
+            ->withData('password', 'testPasswordFromRequest');
+        $this->request->getSession()->write([
             'TwoFactorAuth.credentials' => [
                 'username' => $this->_encrypt('testUsername'),
                 'password' => $this->_encrypt('testPassword')
@@ -157,10 +165,11 @@ class FormAuthenticateTest extends TestCase
      * test getting user credentials when they're not set
      *
      * @return void
+     * @throws \ReflectionException
      */
     public function testGetCredentialsNone()
     {
-        $this->auth->config([
+        $this->auth->setConfig([
             'userModel' => 'AuthUsers',
             'fields' => ['username' => 'user', 'password' => 'password', 'secret' => 'secret']
         ]);
@@ -172,38 +181,33 @@ class FormAuthenticateTest extends TestCase
      * test authenticating user having a secret, but no one-time code passed
      *
      * @return void
+     * @throws \Exception
      */
     public function testAuthenticateWithSecretNoCode()
     {
-        $credentials = [
-            'username' => 'nate',
-            'password' => 'password'
-        ];
-
-        $this->request->data = $credentials;
-        $this->response = $this->getMock('Cake\Network\Response', ['location']);
-
-        $this->Controller->Auth->config('verifyAction', 'testVerifyAction');
+        $this->request = $this->request
+            ->withData('username', 'nate')
+            ->withData('password', 'password');
+        $this->response = $this->getMockBuilder('Cake\Http\Response')->setMethods(['withLocation'])->getMock();
 
         $this->response->expects($this->once())
-            ->method('location')
-            ->with('/testVerifyAction')
-            ->will($this->returnValue(true));
+            ->method('withLocation')
+            ->with('/Users/verify')
+            ->will($this->returnSelf());
 
         $this->assertFalse($this->auth->authenticate($this->request, $this->response));
-
-        //$this->assertEquals($credentials, $this->request->session()->read('TwoFactorAuth.credentials'));
     }
 
     /**
      * test authenticating user having a secret, invalid code passed
      *
      * @return void
+     * @throws \Exception
      */
     public function testAuthenticateWithSecretCodeInvalid()
     {
-        $this->request->data = ['code' => '123'];
-        $this->request->session()->write([
+        $this->request = $this->request->withData('code', '123');
+        $this->request->getSession()->write([
             'TwoFactorAuth' => [
                 'credentials' => [
                     'username' => $this->_encrypt('nate'),
@@ -211,19 +215,17 @@ class FormAuthenticateTest extends TestCase
                 ]
             ]
         ]);
-        $this->response = $this->getMock('Cake\Network\Response', ['location']);
-
-        $this->Controller->Auth->config('verifyAction', 'testVerifyAction');
+        $this->response = $this->getMockBuilder('Cake\Http\Response')->setMethods(['withLocation'])->getMock();
 
         $this->response->expects($this->once())
-            ->method('location')
-            ->with('/testVerifyAction')
-            ->will($this->returnValue(true));
+            ->method('withLocation')
+            ->with('/Users/verify')
+            ->will($this->returnSelf());
 
         $this->assertFalse($this->auth->authenticate($this->request, $this->response));
         $this->assertEquals(
             'Invalid two-step verification code.',
-            $this->request->session()->read('Flash.auth.0.message')
+            $this->request->getSession()->read('Flash.two-factor-auth.0.message')
         );
     }
 
@@ -231,10 +233,11 @@ class FormAuthenticateTest extends TestCase
      * test authenticating user having a secret, credentials in session, but no one-time code passed
      *
      * @return void
+     * @throws \Exception
      */
     public function testAuthenticateWithSecretCodeNone()
     {
-        $this->request->session()->write([
+        $this->request->getSession()->write([
             'TwoFactorAuth' => [
                 'credentials' => [
                     'username' => $this->_encrypt('nate'),
@@ -242,14 +245,12 @@ class FormAuthenticateTest extends TestCase
                 ]
             ]
         ]);
-        $this->response = $this->getMock('Cake\Network\Response', ['location']);
-
-        $this->Controller->Auth->config('verifyAction', 'testVerifyAction');
+        $this->response = $this->getMockBuilder('Cake\Http\Response')->setMethods(['withLocation'])->getMock();
 
         $this->response->expects($this->once())
-            ->method('location')
-            ->with('/testVerifyAction')
-            ->will($this->returnValue(true));
+            ->method('withLocation')
+            ->with('/Users/verify')
+            ->will($this->returnSelf());
 
         $this->assertFalse($this->auth->authenticate($this->request, $this->response));
     }
@@ -258,13 +259,14 @@ class FormAuthenticateTest extends TestCase
      * test authenticating user having a secret and correct code
      *
      * @return void
+     * @throws \Exception
      */
     public function testAuthenticateWithSecretSuccess()
     {
-        $secret = TableRegistry::get('Users')->find()->where(['username' => 'nate'])->first()->get('secret');
+        $secret = TableRegistry::getTableLocator()->get('Users')->find()->where(['username' => 'nate'])->first()->get('secret');
 
-        $this->request->data = ['code' => $this->Controller->Auth->tfa->getCode($secret)];
-        $this->request->session()->write([
+        $this->request = $this->request->withData('code', $this->Controller->Auth->tfa->getCode($secret));
+        $this->request->getSession()->write([
             'TwoFactorAuth' => [
                 'credentials' => [
                     'username' => $this->_encrypt('nate'),
@@ -272,13 +274,9 @@ class FormAuthenticateTest extends TestCase
                 ]
             ]
         ]);
-        $this->response = $this->getMock('Cake\Network\Response', ['location']);
+        $this->response = $this->getMockBuilder('Cake\Http\Response')->setMethods(['withLocation'])->getMock();
 
-        $this->Controller->Auth->config('verifyAction', 'testVerifyAction');
-
-        $this->response->expects($this->never())
-            ->method('location')
-            ->will($this->returnValue(true));
+        $this->response->expects($this->never())->method('withLocation');
 
         $expected = [
             'id' => 2,
@@ -292,7 +290,7 @@ class FormAuthenticateTest extends TestCase
             $this->auth->authenticate($this->request, $this->response)
         );
 
-        $this->assertNull($this->request->session()->read('TwoFactorAuth.credentials'));
+        $this->assertNull($this->request->getSession()->read('TwoFactorAuth.credentials'));
     }
 
     /**
@@ -304,8 +302,8 @@ class FormAuthenticateTest extends TestCase
      */
     public function testWrongAuthComponentUsed()
     {
-        $this->request->data = ['code' => '123'];
-        $this->request->session()->write([
+        $this->request = $this->request->withData('code', '123');
+        $this->request->getSession()->write([
             'TwoFactorAuth' => [
                 'credentials' => [
                     'username' => $this->_encrypt('nate'),
@@ -323,11 +321,11 @@ class FormAuthenticateTest extends TestCase
      * test the authenticate method
      *
      * @return void
+     * @throws \Exception
      */
     public function testAuthenticateNoData()
     {
-        $request = new Request('posts/index');
-        $request->data = [];
+        $request = new ServerRequest('posts/index');
         $this->assertFalse($this->auth->authenticate($request, $this->response));
     }
 
@@ -335,11 +333,12 @@ class FormAuthenticateTest extends TestCase
      * test the authenticate method
      *
      * @return void
+     * @throws \Exception
      */
     public function testAuthenticateNoUsername()
     {
-        $request = new Request('posts/index');
-        $request->data = ['password' => 'foobar'];
+        $request = new ServerRequest('posts/index');
+        $this->request = $this->request->withData('password', 'foobar');
         $this->assertFalse($this->auth->authenticate($request, $this->response));
     }
 
@@ -347,11 +346,12 @@ class FormAuthenticateTest extends TestCase
      * test the authenticate method
      *
      * @return void
+     * @throws \Exception
      */
     public function testAuthenticateNoPassword()
     {
-        $request = new Request('posts/index');
-        $request->data = ['username' => 'mariano'];
+        $request = new ServerRequest('posts/index');
+        $this->request = $this->request->withData('username', 'mariano');
         $this->assertFalse($this->auth->authenticate($request, $this->response));
     }
 
@@ -359,14 +359,14 @@ class FormAuthenticateTest extends TestCase
      * test authenticate password is false method
      *
      * @return void
+     * @throws \Exception
      */
     public function testAuthenticatePasswordIsFalse()
     {
-        $request = new Request('posts/index', false);
-        $request->data = [
-            'username' => 'mariano',
-            'password' => null
-        ];
+        $request = new ServerRequest('posts/index');
+        $this->request = $this->request
+            ->withData('username', 'mariano')
+            ->withData('password', null);
         $this->assertFalse($this->auth->authenticate($request, $this->response));
     }
 
@@ -375,24 +375,24 @@ class FormAuthenticateTest extends TestCase
      * Refs https://github.com/cakephp/cakephp/pull/2441
      *
      * @return void
+     * @throws \Exception
      */
     public function testAuthenticatePasswordIsEmptyString()
     {
-        $request = new Request('posts/index', false);
-        $request->data = [
-            'username' => 'mariano',
-            'password' => ''
-        ];
-        $this->auth = $this->getMock(
-            'TwoFactorAuth\Auth\FormAuthenticate',
-            ['_getCredentials'],
-            [
+        $request = new ServerRequest('posts/index');
+        $this->request = $this->request
+            ->withData('username', 'mariano')
+            ->withData('password', '');
+        $this->auth = $this->getMockBuilder('TwoFactorAuth\Auth\FormAuthenticate')
+            ->setConstructorArgs([
                 $this->ComponentRegistry,
                 [
                     'userModel' => 'Users'
                 ]
-            ]
-        );
+            ])
+            ->setMethods(['_getCredentials'])
+            ->getMock();
+
         // Simulate that check for ensuring password is not empty is missing.
         $this->auth->expects($this->once())
             ->method('_getCredentials')
@@ -404,19 +404,18 @@ class FormAuthenticateTest extends TestCase
      * test authenticate field is not string
      *
      * @return void
+     * @throws \Exception
      */
     public function testAuthenticateFieldsAreNotString()
     {
-        $request = new Request('posts/index', false);
-        $request->data = [
-            'username' => ['mariano', 'phpnut'],
-            'password' => 'my password'
-        ];
+        $request = new ServerRequest('posts/index');
+        $this->request = $this->request
+            ->withData('username', 'phpnut')
+            ->withData('password', 'my password');
         $this->assertFalse($this->auth->authenticate($request, $this->response));
-        $request->data = [
-            'username' => 'mariano',
-            'password' => ['password1', 'password2']
-        ];
+        $this->request = $this->request
+            ->withData('username', 'mariano')
+            ->withData('password', ['password1', 'password2']);
         $this->assertFalse($this->auth->authenticate($request, $this->response));
     }
 
@@ -424,14 +423,14 @@ class FormAuthenticateTest extends TestCase
      * test the authenticate method
      *
      * @return void
+     * @throws \Exception
      */
     public function testAuthenticateInjection()
     {
-        $request = new Request('posts/index');
-        $request->data = [
-            'username' => '> 1',
-            'password' => "' OR 1 = 1"
-        ];
+        $request = new ServerRequest('posts/index');
+        $this->request = $this->request
+            ->withData('username', '> 1')
+            ->withData('password', "' OR 1 = 1");
         $this->assertFalse($this->auth->authenticate($request, $this->response));
     }
 
@@ -439,14 +438,13 @@ class FormAuthenticateTest extends TestCase
      * test authenticate success
      *
      * @return void
+     * @throws \Exception
      */
     public function testAuthenticateSuccess()
     {
-        $request = new Request('posts/index');
-        $request->data = [
-            'username' => 'mariano',
-            'password' => 'password'
-        ];
+        $request = (new ServerRequest('posts/index'))
+            ->withData('username', 'mariano')
+            ->withData('password', 'password');
         $result = $this->auth->authenticate($request, $this->response);
         $expected = [
             'id' => 1,
@@ -461,16 +459,15 @@ class FormAuthenticateTest extends TestCase
      * Test that authenticate() includes virtual fields.
      *
      * @return void
+     * @throws \Exception
      */
     public function testAuthenticateIncludesVirtualFields()
     {
-        $users = TableRegistry::get('Users');
-        $users->entityClass('TwoFactorAuth\Test\App\Model\Entity\VirtualUser');
-        $request = new Request('posts/index');
-        $request->data = [
-            'username' => 'mariano',
-            'password' => 'password'
-        ];
+        $users = TableRegistry::getTableLocator()->get('Users');
+        $users->setEntityClass('TwoFactorAuth\Test\App\Model\Entity\VirtualUser');
+        $request = (new ServerRequest('posts/index'))
+            ->withData('username', 'mariano')
+            ->withData('password', 'password');
         $result = $this->auth->authenticate($request, $this->response);
         $expected = [
             'id' => 1,
@@ -486,15 +483,14 @@ class FormAuthenticateTest extends TestCase
      * Test using custom finder
      *
      * @return void
+     * @throws \Exception
      */
     public function testFinder()
     {
-        $request = new Request('posts/index');
-        $request->data = [
-            'username' => 'mariano',
-            'password' => 'password'
-        ];
-        $this->auth->config([
+        $request = (new ServerRequest('posts/index'))
+            ->withData('username', 'mariano')
+            ->withData('password', 'password');
+        $this->auth->setConfig([
             'userModel' => 'AuthUsers',
             'finder' => 'auth'
         ]);
@@ -510,27 +506,26 @@ class FormAuthenticateTest extends TestCase
      * test password hasher settings
      *
      * @return void
+     * @throws \Exception
      */
     public function testPasswordHasherSettings()
     {
-        $this->auth->config('passwordHasher', [
+        $this->auth->setConfig('passwordHasher', [
             'className' => 'Default',
             'hashType' => PASSWORD_BCRYPT
         ]);
         $passwordHasher = $this->auth->passwordHasher();
-        $result = $passwordHasher->config();
+        $result = $passwordHasher->getConfig();
         $this->assertEquals(PASSWORD_BCRYPT, $result['hashType']);
         $hash = password_hash('mypass', PASSWORD_BCRYPT);
-        $User = TableRegistry::get('Users');
+        $User = TableRegistry::getTableLocator()->get('Users');
         $User->updateAll(
             ['password' => $hash],
             ['username' => 'mariano']
         );
-        $request = new Request('posts/index');
-        $request->data = [
-            'username' => 'mariano',
-            'password' => 'mypass'
-        ];
+        $request = new ServerRequest('posts/index');
+        $request = $request->withData('username', 'mariano')
+            ->withData('password', 'mypass');
         $result = $this->auth->authenticate($request, $this->response);
         $expected = [
             'id' => 1,
@@ -543,7 +538,7 @@ class FormAuthenticateTest extends TestCase
             'fields' => ['username' => 'username', 'password' => 'password'],
             'userModel' => 'Users'
         ]);
-        $this->auth->config('passwordHasher', [
+        $this->auth->setConfig('passwordHasher', [
             'className' => 'Default'
         ]);
         $this->assertEquals($expected, $this->auth->authenticate($request, $this->response));
@@ -558,14 +553,13 @@ class FormAuthenticateTest extends TestCase
      * Tests that using default means password don't need to be rehashed
      *
      * @return void
+     * @throws \Exception
      */
     public function testAuthenticateNoRehash()
     {
-        $request = new Request('posts/index');
-        $request->data = [
-            'username' => 'mariano',
-            'password' => 'password'
-        ];
+        $request = (new ServerRequest('posts/index'))
+            ->withData('username', 'mariano')
+            ->withData('password', 'password');
         $result = $this->auth->authenticate($request, $this->response);
         $this->assertNotEmpty($result);
         $this->assertFalse($this->auth->needsPasswordRehash());
@@ -576,6 +570,7 @@ class FormAuthenticateTest extends TestCase
      * needs to be rehashed
      *
      * @return void
+     * @throws \Exception
      */
     public function testAuthenticateRehash()
     {
@@ -584,12 +579,10 @@ class FormAuthenticateTest extends TestCase
             'passwordHasher' => 'Weak'
         ]);
         $password = $this->auth->passwordHasher()->hash('password');
-        TableRegistry::get('Users')->updateAll(['password' => $password], []);
-        $request = new Request('posts/index');
-        $request->data = [
-            'username' => 'mariano',
-            'password' => 'password'
-        ];
+        TableRegistry::getTableLocator()->get('Users')->updateAll(['password' => $password], []);
+        $request = (new ServerRequest('posts/index'))
+            ->withData('username', 'mariano')
+            ->withData('password', 'password');
         $result = $this->auth->authenticate($request, $this->response);
         $this->assertNotEmpty($result);
         $this->assertTrue($this->auth->needsPasswordRehash());
@@ -599,11 +592,12 @@ class FormAuthenticateTest extends TestCase
      * Test if the security salt is used as encryption key when no custom key is set
      *
      * @return void
+     * @throws \ReflectionException
      */
     public function testEncryptionKeySecuritySalt()
     {
         $salt = 'this is just another random salt which should not be used';
-        Security::salt($salt);
+        Security::setSalt($salt);
 
         $this->assertEquals($salt, $this->protectedMethodCall($this->auth, '_encryptionKey'));
     }
@@ -612,6 +606,7 @@ class FormAuthenticateTest extends TestCase
      * Test if the custom encryption key is used when set
      *
      * @return void
+     * @throws \ReflectionException
      */
     public function testCustomEncryptionKey()
     {
@@ -622,18 +617,110 @@ class FormAuthenticateTest extends TestCase
     }
 
     /**
+     * Test if cookie is set when remember is checked
+     *
+     * @return void
+     * @throws \Exception
+     */
+    public function testLoginWithRememberTrue()
+    {
+        $secret = TableRegistry::getTableLocator()->get('Users')->find()->where(['username' => 'nate'])->first()->get('secret');
+
+        $this->request = $this->request->withData('code', $this->Controller->Auth->tfa->getCode($secret));
+        $this->request = $this->request->withData('remember', 1);
+        $this->request->getSession()->write([
+            'TwoFactorAuth' => [
+                'credentials' => [
+                    'username' => $this->_encrypt('nate'),
+                    'password' => $this->_encrypt('password')
+                ]
+            ]
+        ]);
+        $this->response = $this->getMockBuilder('Cake\Http\Response')->setMethods(['withLocation'])->getMock();
+
+        $this->Controller->Auth->setConfig('verifyAction', 'testVerifyAction');
+
+        $this->response->expects($this->never())->method('withLocation');
+
+        $this->auth->setConfig('remember', true);
+        $this->auth->authenticate($this->request, $this->response);
+
+        $this->assertEquals(['secret' => $secret], $this->Controller->Cookie->read('TwoFactorAuth'));
+    }
+
+    /**
+     * Test if cookie is not set if remember isn't checked
+     *
+     * @return void
+     * @throws \Exception
+     */
+    public function testLoginWithRememberFalse()
+    {
+        $secret = TableRegistry::getTableLocator()->get('Users')->find()->where(['username' => 'nate'])->first()->get('secret');
+
+        $this->request = $this->request->withData('code', $this->Controller->Auth->tfa->getCode($secret));
+        $this->request = $this->request->withData('remember', 0);
+        $this->request->getSession()->write([
+            'TwoFactorAuth' => [
+                'credentials' => [
+                    'username' => $this->_encrypt('nate'),
+                    'password' => $this->_encrypt('password')
+                ]
+            ]
+        ]);
+        $this->response = $this->getMockBuilder('Cake\Http\Response')->setMethods(['withLocation'])->getMock();
+
+        $this->Controller->Auth->setConfig('verifyAction', 'testVerifyAction');
+
+        $this->response->expects($this->never())->method('withLocation');
+
+        $this->auth->setConfig('remember', true);
+        $this->auth->authenticate($this->request, $this->response);
+        $this->assertNull($this->Controller->Cookie->read('TwoFactorAuth'));
+    }
+
+    /**
+     * Test if no secret is asked when cookie is set
+     *
+     * @return void
+     * @throws \ReflectionException
+     */
+    public function testRememberedLogin()
+    {
+        $secret = TableRegistry::getTableLocator()->get('Users')->find()->where(['username' => 'nate'])->first()->get('secret');
+
+        $this->Controller->loadComponent('Cookie');
+        $this->Controller->Cookie->write('TwoFactorAuth', compact('secret'));
+        $this->request->getSession()->write([
+            'TwoFactorAuth' => [
+                'credentials' => [
+                    'username' => $this->_encrypt('nate'),
+                    'password' => $this->_encrypt('password')
+                ]
+            ]
+        ]);
+
+        $this->Controller->Auth->setConfig('verifyAction', 'testVerifyAction');
+
+        $this->auth->setConfig('remember', true);
+        $this->assertTrue($this->protectedMethodCall($this->auth, '_verifyCode', [$secret, null, $this->response]));
+    }
+
+    /**
      * Call a protected method on an object
      *
      * @param object $obj object
      * @param string $name method to call
      * @param array $args arguments to pass to the method
      * @return mixed
+     * @throws \ReflectionException
      */
     public function protectedMethodCall($obj, $name, array $args = [])
     {
         $class = new \ReflectionClass($obj);
         $method = $class->getMethod($name);
         $method->setAccessible(true);
+
         return $method->invokeArgs($obj, $args);
     }
 
@@ -642,6 +729,7 @@ class FormAuthenticateTest extends TestCase
      *
      * @param string $value the string to encrypt
      * @return string
+     * @throws \ReflectionException
      */
     private function _encrypt($value)
     {

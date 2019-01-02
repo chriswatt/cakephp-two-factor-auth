@@ -1,13 +1,12 @@
 <?php
 namespace TwoFactorAuth\Controller;
 
-use Cake\Controller\Controller;
 use Cake\Event\Event;
 
 /**
  * TwoFactorAuth Controller
  */
-class TwoFactorAuthController extends Controller
+class TwoFactorAuthController extends AppController
 {
 
     /**
@@ -15,7 +14,7 @@ class TwoFactorAuthController extends Controller
      * or perform logic that needs to happen before each controller action.
      *
      * @param \Cake\Event\Event $event An Event instance
-     * @return \Cake\Network\Response|null
+     * @return \Cake\Network\Response|void
      * @link http://book.cakephp.org/3.0/en/controllers.html#request-life-cycle-callbacks
      */
     public function beforeFilter(Event $event)
@@ -30,6 +29,7 @@ class TwoFactorAuthController extends Controller
      */
     public function verify()
     {
-        $this->set('loginAction', $this->Auth->config('loginAction'));
+        $this->set('loginAction', $this->Auth->getConfig('loginAction'));
+        $this->set('remember', $this->Auth->getConfig('TwoFactorAuth.remember'));
     }
 }

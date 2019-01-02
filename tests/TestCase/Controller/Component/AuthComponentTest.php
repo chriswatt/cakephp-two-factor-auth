@@ -3,7 +3,6 @@ namespace TwoFactorAuth\Test\TestCase\Controller\Component;
 
 use Cake\Controller\Component;
 use Cake\Controller\Controller;
-use Cake\Core\Configure;
 use Cake\Network\Request;
 use Cake\TestSuite\TestCase;
 use TwoFactorAuth\Controller\Component\AuthComponent;
@@ -32,7 +31,7 @@ class TwoFactorAuthComponentTest extends TestCase
         parent::setUp();
 
         $request = new Request();
-        $response = $this->getMock('Cake\Network\Response', ['stop']);
+        $response = $this->getMockBuilder('Cake\Http\Response')->setMethods(['stop'])->getMock();
 
         $this->Controller = new Controller($request, $response);
         $this->Auth = new AuthComponent($this->Controller->components());
@@ -60,6 +59,9 @@ class TwoFactorAuthComponentTest extends TestCase
         $this->assertInstanceOf('RobThree\Auth\TwoFactorAuth', $this->Auth->tfa);
     }
 
+    /**
+     * @throws \ReflectionException
+     */
     public function testDefaultVerifyAction()
     {
         $this->protectedMethodCall($this->Auth, '_setDefaults');
@@ -69,17 +71,23 @@ class TwoFactorAuthComponentTest extends TestCase
             'action' => 'verify',
             'plugin' => 'TwoFactorAuth',
             'prefix' => false,
-        ], $this->Auth->config('verifyAction'));
+        ], $this->Auth->getConfig('verifyAction'));
     }
 
+    /**
+     * @throws \ReflectionException
+     */
     public function testVerifyAction()
     {
-        $this->Auth->config('verifyAction', 'testAction');
+        $this->Auth->setConfig('verifyAction', 'testAction');
         $this->protectedMethodCall($this->Auth, '_setDefaults');
 
-        $this->assertEquals('testAction', $this->Auth->config('verifyAction'));
+        $this->assertEquals('testAction', $this->Auth->getConfig('verifyAction'));
     }
 
+    /**
+     * @throws \RobThree\Auth\TwoFactorAuthException
+     */
     public function testVerifyCode()
     {
         $secret = $this->Auth->tfa->createSecret();
@@ -88,6 +96,9 @@ class TwoFactorAuthComponentTest extends TestCase
         $this->assertTrue($this->Auth->tfa->verifyCode($secret, $code));
     }
 
+    /**
+     * @throws \RobThree\Auth\TwoFactorAuthException
+     */
     public function testVerifyCodeWrong()
     {
         $secret = $this->Auth->tfa->createSecret();
@@ -103,12 +114,14 @@ class TwoFactorAuthComponentTest extends TestCase
      * @param string $name method to call
      * @param array $args arguments to pass to the method
      * @return mixed
+     * @throws \ReflectionException
      */
     public function protectedMethodCall($obj, $name, array $args = [])
     {
         $class = new \ReflectionClass($obj);
         $method = $class->getMethod($name);
         $method->setAccessible(true);
+
         return $method->invokeArgs($obj, $args);
     }
 }
